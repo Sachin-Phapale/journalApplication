@@ -13,8 +13,8 @@ spring:
     allow-circular-references: true
   server:
     port: ${SERVER_PORT}
-    servlet:
-      context-path: /journal
+    # servlet:
+    #   context-path: /journal
   redis:
     data:
       host: ${REDIS_HOST}
