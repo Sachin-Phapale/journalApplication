@@ -36,9 +36,9 @@ export const AuthProvider = ({ children }) => {
   const login = async (credentials) => {
     try {
       const response = await authService.login(credentials);
-      const { token, user: userData } = response.data;
+      const token = response.data; // Backend returns token as string, not object
       localStorage.setItem('token', token);
-      setUser(userData);
+      setUser({ userName: credentials.userName }); // Set basic user info
       return response;
     } catch (error) {
       throw error;
