@@ -33,6 +33,12 @@ public class SpringSecurity extends WebSecurityConfigurerAdapter {
     protected void configure(HttpSecurity http) throws Exception {
         http.authorizeRequests()
                 .antMatchers("/public/**").permitAll()
+                .antMatchers("/", "/login", "/signup", "/dashboard", "/entries", "/create-entry", "/edit-entry/**", "/profile", "/admin").permitAll()
+                .antMatchers("/static/**").permitAll()
+                .antMatchers("/*.js", "/*.css", "/*.json", "/*.ico").permitAll()
+                .antMatchers("/journal/**").authenticated()
+                .antMatchers("/user/**").authenticated()
+                .antMatchers("/admin/**").authenticated()
                 .anyRequest().authenticated();
         http.sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS).and().csrf().disable();
         http.addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);

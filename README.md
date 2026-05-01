@@ -30,7 +30,7 @@ A secure, cloud-based journaling application with sentiment analysis and real-ti
 ## 🛠️ Technologies Used
 
 - **Backend**
-  - Java 8
+  - Java 17
   - Spring Boot 2.7.16
   - Spring Security
   - Spring Data MongoDB
@@ -39,13 +39,20 @@ A secure, cloud-based journaling application with sentiment analysis and real-ti
   - Apache Kafka for event streaming
   - Swagger/OpenAPI 3.0 for API documentation
 
+- **Frontend**
+  - React 18
+  - React Router 6
+  - TailwindCSS
+  - Axios for API calls
+  - Lucide React for icons
+
 - **Database**
   - MongoDB (NoSQL Database)
   - Redis (Caching)
 
 - **DevOps & Tools**
   - Maven (Dependency Management)
-  - SonarCloud (Code Quality)
+  - Node.js & npm
   - Lombok (Reducing Boilerplate)
   - Logback (Logging)
 
@@ -53,37 +60,66 @@ A secure, cloud-based journaling application with sentiment analysis and real-ti
 
 ### Prerequisites
 
-- Java 8 or higher
+- Java 17 or higher
 - Maven 3.6 or higher
+- Node.js 16 or higher
+- npm 8 or higher
 - MongoDB 4.4 or higher
-- Redis 6.x or higher
-- Apache Kafka 2.8 or higher
+- Redis 6.x or higher (optional)
+- Apache Kafka 2.8 or higher (optional)
 
 ### Installation
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/journal-application.git
-   cd journal-application
+   git clone https://github.com/Sachin-Phapale/journalApplication.git
+   cd journalApplication
    ```
 
-2. **Configure the application**
-   - Copy `src/main/resources/application.yml.example` to `src/main/resources/application.yml`
-   - Update the configuration with your database credentials, JWT secret, and other settings
+2. **Set up the Backend**
+   - Configure environment variables or update `src/main/resources/application.yml`
+   - Set up MongoDB connection string
+   - Configure JWT secret and other settings
 
-3. **Build the application**
+3. **Set up the Frontend**
    ```bash
-   mvn clean install
+   cd frontend
+   npm install
    ```
 
-4. **Run the application**
+4. **Build the Frontend**
    ```bash
-   mvn spring-boot:run
+   npm run build
+   ```
+   
+   This will automatically copy the build files to the Spring Boot static directory.
+
+5. **Run the application**
+   ```bash
+   cd ..
+   ./mvnw.cmd spring-boot:run
    ```
 
-5. **Access the application**
+6. **Access the application**
+   - Frontend Application: http://localhost:8080
    - API Documentation: http://localhost:8080/swagger-ui.html
-   - Application: http://localhost:8080
+
+### Development Mode
+
+For development with hot reload:
+
+1. **Start Backend** (in one terminal):
+   ```bash
+   ./mvnw.cmd spring-boot:run
+   ```
+
+2. **Start Frontend** (in another terminal):
+   ```bash
+   cd frontend
+   npm start
+   ```
+
+The frontend will run on http://localhost:3000 and proxy API calls to the backend.
 
 ## 📚 API Documentation
 
