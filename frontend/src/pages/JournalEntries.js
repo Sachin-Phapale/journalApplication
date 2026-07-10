@@ -134,7 +134,7 @@ const JournalEntries = () => {
                     {entry.title}
                   </h3>
                   <div className="flex items-center text-sm text-gray-500 mb-3">
-                    <Calendar className="h-4 w-4 mr-1" />
+                    <span className="mr-1">📅</span>
                     {new Date(entry.date).toLocaleDateString('en-US', {
                       year: 'numeric',
                       month: 'long',

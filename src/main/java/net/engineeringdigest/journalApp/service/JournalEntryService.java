@@ -28,12 +28,14 @@ public class JournalEntryService {
 
 
 
-    @Transactional
     public void saveEntry(JournalEntry journalEntry, String userName) {
         try {
             User user = userService.findByUserName(userName);
             journalEntry.setDate(LocalDateTime.now());
             JournalEntry saved = journalEntryRepository.save(journalEntry);
+            if (user.getJournalEntries() == null) {
+                user.setJournalEntries(new java.util.ArrayList<>());
+            }
             user.getJournalEntries().add(saved);
             userService.saveUser(user);
         } catch (Exception e) {
@@ -53,11 +55,13 @@ public class JournalEntryService {
         return journalEntryRepository.findById(id);
     }
 
-    @Transactional
     public boolean deleteById(ObjectId id, String userName) {
         boolean removed = false;
         try {
             User user = userService.findByUserName(userName);
+            if (user.getJournalEntries() == null) {
+                user.setJournalEntries(new java.util.ArrayList<>());
+            }
             removed = user.getJournalEntries().removeIf(x -> x.getId().equals(id));
             if (removed) {
                 userService.saveUser(user);

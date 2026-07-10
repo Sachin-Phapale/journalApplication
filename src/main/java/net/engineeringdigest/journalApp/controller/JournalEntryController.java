@@ -39,10 +39,10 @@ public class JournalEntryController {
             String userName = authentication.getName();
             User user = userService.findByUserName(userName);
             List<JournalEntry> all = user.getJournalEntries();
-            if (all != null && !all.isEmpty()) {
-                return new ResponseEntity<>(all, HttpStatus.OK);
+            if (all == null) {
+                all = new ArrayList<>();
             }
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+            return new ResponseEntity<>(all, HttpStatus.OK);
         } catch (Exception e) {
             System.out.println("Error getting journal entries: " + e.getMessage());
             e.printStackTrace();
@@ -51,24 +51,15 @@ public class JournalEntryController {
     }
 
     @PostMapping
-    public ResponseEntity<String> createEntry() {
+    public ResponseEntity<?> createEntry(@RequestBody JournalEntry myEntry) {
         try {
-            System.out.println("=== POST REQUEST RECEIVED ===");
-            
-            // Create a simple test entry directly
-            JournalEntry myEntry = new JournalEntry();
-            myEntry.setTitle("Test Entry " + System.currentTimeMillis());
-            myEntry.setContent("This is a test entry created at " + new java.util.Date());
-            
-            String userName = "testuser";
-            System.out.println("Creating entry for user: " + userName);
-            System.out.println("Entry title: " + myEntry.getTitle());
-            System.out.println("Entry content: " + myEntry.getContent());
-            
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (authentication == null || !authentication.isAuthenticated() || "anonymousUser".equals(authentication.getName())) {
+                return new ResponseEntity<>("Please login to create journal entries", HttpStatus.UNAUTHORIZED);
+            }
+            String userName = authentication.getName();
             journalEntryService.saveEntry(myEntry, userName);
-            System.out.println("Entry saved successfully!");
-            
-            return new ResponseEntity<>("Journal entry created successfully!", HttpStatus.CREATED);
+            return new ResponseEntity<>(myEntry, HttpStatus.CREATED);
         } catch (Exception e) {
             System.out.println("Error creating journal entry: " + e.getMessage());
             e.printStackTrace();

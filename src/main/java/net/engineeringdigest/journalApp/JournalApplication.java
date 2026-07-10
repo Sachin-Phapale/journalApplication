@@ -19,7 +19,7 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.web.client.RestTemplate;
 
 @SpringBootApplication
-@EnableTransactionManagement
+// @EnableTransactionManagement
 @EnableScheduling
 public class JournalApplication {
 
@@ -27,10 +27,11 @@ public class JournalApplication {
         SpringApplication.run(JournalApplication.class, args);
     }
 
-    @Bean
-    public PlatformTransactionManager falana(MongoDatabaseFactory dbFactory){
-        return new MongoTransactionManager(dbFactory);
-    }
+    // Commented out to support standalone local MongoDB instances (which do not support transactions)
+    // @Bean
+    // public PlatformTransactionManager falana(MongoDatabaseFactory dbFactory){
+    //     return new MongoTransactionManager(dbFactory);
+    // }
     @Bean
     public RestTemplate restTemplate() {
         return new RestTemplate();
