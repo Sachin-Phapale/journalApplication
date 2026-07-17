@@ -1,35 +1,36 @@
 weather:
   api:
-    key: ${WEATHER_API_KEY}
+    key: ${WEATHER_API_KEY:dummy-weather-key}
 spring:
   security:
     oauth2:
       client:
         registration:
           google:
-            client-id: ${GOOGLE_CLIENT_ID}
-            client-secret: ${GOOGLE_CLIENT_SECRET}
+            client-id: ${GOOGLE_CLIENT_ID:dummy-google-id}
+            client-secret: ${GOOGLE_CLIENT_SECRET:dummy-google-secret}
   main:
     allow-circular-references: true
+    banner-mode: "off"
   server:
-    port: ${SERVER_PORT}
+    port: ${SERVER_PORT:8080}
     # servlet:
     #   context-path: /journal
   redis:
     data:
-      host: ${REDIS_HOST}
+      host: ${REDIS_HOST:localhost}
       port: 15641
-      password: ${REDIS_PASSWORD}
+      password: ${REDIS_PASSWORD:}
   data:
     mongodb:
-      uri: ${MONGODB_URI}
+      uri: ${MONGODB_URI:mongodb://localhost:27017/journaldb}
       database: journaldb
       auto-index-creation: true
   mail:
     host: smtp.gmail.com
     port: 587
-    username: ${JAVA_EMAIL}
-    password: ${JAVA_EMAIL_PASSWORD}
+    username: ${JAVA_EMAIL:dummy@example.com}
+    password: ${JAVA_EMAIL_PASSWORD:dummy-email-password}
     properties:
       mail:
         smtp:
@@ -37,7 +38,7 @@ spring:
           starttls:
             enable: true
   kafka:
-    bootstrap-servers: ${KAFKA_SERVERS}
+    bootstrap-servers: ${KAFKA_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
@@ -60,3 +61,10 @@ spring:
       session:
         timeout:
           ms: 45000
+mcp:
+  server:
+    name: "Journal App MCP Server"
+    version: "1.0.0"
+    transport: "stdio"
+  security:
+    default-user: "admin"

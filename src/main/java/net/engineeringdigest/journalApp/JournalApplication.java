@@ -23,7 +23,11 @@ import org.springframework.web.client.RestTemplate;
 @EnableScheduling
 public class JournalApplication {
 
+    public static java.io.PrintStream originalOut;
+
     public static void main(String[] args) {
+        originalOut = System.out;
+        System.setOut(System.err);
         SpringApplication.run(JournalApplication.class, args);
     }
 
