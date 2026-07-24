@@ -1,0 +1,321 @@
+# Journal Application: Request-to-Response Flows
+
+This document details the step-by-step incoming request-to-response flows for all operations in the journal application. The application processes requests through two primary transport layers:
+1. **HTTP/REST Transport**: Traditional REST APIs exposed over web ports (using Spring Security, Filters, and Controllers).
+2. **MCP (Model Context Protocol) Transport**: A JSON-RPC protocol executing over Standard Input/Output (STDIO) for AI agent tools.
+
+---
+
+## 1. Global Core Components & Middlewares
+
+### A. HTTP Request Processing Chain
+For every incoming HTTP request, Spring Boot dispatches the request through a series of filters and security layers:
+
+```
+[ Client Request ]
+       │
+       ▼
+ 1. [ JwtFilter ] ──────────► Parses 'Authorization: Bearer <token>' header.
+       │                      Extracts username via JwtUtil, validates token,
+       │                      and builds SecurityContextHolder Authentication.
+       ▼
+ 2. [ SpringSecurity ] ─────► Matches endpoint path. Evaluates authorization rules.
+       │                      If permitAll() is met or user holds correct roles, request proceeds.
+       ▼
+ 3. [ DispatcherServlet ] ──► Resolves route and forwards request to correct @RestController.
+       │
+       ▼
+ 4. [ Controller ] ─────────► Extracts parameters (@RequestBody, @PathVariable, @RequestParam).
+       │                      Executes handler logic.
+       ▼
+ 5. [ Service Layer ] ──────► Applies business logic, interacts with Cache or third-party APIs.
+       │
+       ▼
+ 6. [ Repository Layer ] ───► Executes DB queries (MongoDB via MongoRepository/MongoTemplate).
+```
+
+### B. MCP Tool Processing Chain
+For commands processed via Model Context Protocol:
+
+```
+[ MCP Client (e.g. IDE) ] ──(JSON-RPC over System.in)──► [ StdioServerTransportProvider ]
+                                                                     │
+                                                                     ▼
+                                                         [ McpSyncServer Listener Loop ]
+                                                                     │
+                                                                     ▼
+                                                         [ McpSecurityContext ]
+                                                         Resolves user via:
+                                                         1. ThreadLocal Context (if programmatically set)
+                                                         2. SecurityContextHolder (if SSE flow)
+                                                         3. Default fallback user (e.g. 'admin')
+                                                                     │
+                                                                     ▼
+                                                         [ Registered Tool Handler ]
+                                                         Dispatches arguments to Tool Class
+                                                                     │
+                                                                     ▼
+                                                         [ Business Service Layer ]
+                                                                     │
+                                                                     ▼
+[ Client Response ] ◄───(JSON-RPC over System.out)────── [ McpResponse Success/Error Json ]
+```
+
+---
+
+## 2. HTTP/REST API Operations & Flows
+
+### A. Public APIs (`PublicController`)
+These endpoints bypass token validation/authorization checks (`.permitAll()`).
+
+#### 1. Health Check
+*   **Endpoint**: `GET /public/health-check`
+*   **Flow**:
+    1.  **Request Input**: None.
+    2.  **Filter/Security**: Bypasses `JwtFilter` authentication checks. Matches permitAll rule in `SpringSecurity`.
+    3.  **Controller**: `PublicController.healthCheck()` prints log info: `"Health is ok !"`.
+    4.  **Response**: Returns string `"Ok"` with HTTP 200 OK status.
+
+#### 2. Signup / Register User
+*   **Endpoint**: `POST /public/signup`
+*   **Flow**:
+    1.  **Request Input**: JSON payload mapping to `UserDTO` (userName, password, email, sentimentAnalysis option).
+    2.  **Filter/Security**: Allowed publicly.
+    3.  **Controller**: `PublicController.signup(UserDTO)` maps fields into a new `User` entity.
+    4.  **Service**: Calls `UserService.saveNewUser(newUser)`.
+    5.  **Logic**: `UserService` encrypts the plain-text password using `BCryptPasswordEncoder` and assigns the default role `"USER"`.
+    6.  **Repository**: Persists user document via `UserRepository.save(user)` to MongoDB.
+    7.  **Response**: Returns void with HTTP 200 OK status.
+
+#### 3. Log In (Generate JWT Token)
+*   **Endpoint**: `POST /public/login`
+*   **Flow**:
+    1.  **Request Input**: JSON payload with `userName` and `password`.
+    2.  **Filter/Security**: Allowed publicly.
+    3.  **Controller**: `PublicController.login(User)` receives credentials.
+    4.  **Security Manager**: Invokes `AuthenticationManager.authenticate(...)` using standard `UsernamePasswordAuthenticationToken`.
+    5.  **Credentials Validation**: `UserDetailsServiceImpl.loadUserByUsername(username)` pulls hashed password from DB. Password encoder verifies accuracy.
+    6.  **Token Generation**: If authentication succeeds, `JwtUtil.generateToken(username)` creates a signed JWT string.
+    7.  **Response**: Returns JWT token in plain text with HTTP 200 OK status. If invalid, returns `"Incorrect username or password"` with HTTP 400 Bad Request.
+
+---
+
+### B. User APIs (`UserController`)
+Requires validation of the authenticated session/JWT.
+
+#### 4. Update User Settings
+*   **Endpoint**: `PUT /user`
+*   **Flow**:
+    1.  **Request Input**: JSON containing new properties (`userName`, `password`). Header: `Authorization: Bearer <token>`.
+    2.  **Filter/Security**: `JwtFilter` validates JWT and populates `SecurityContextHolder`.
+    3.  **Controller**: `UserController.updateUser(User)` reads security context to retrieve username.
+    4.  **Service**: Queries database via `UserService.findByUserName(userName)` to find existing user data.
+    5.  **Logic**: Modifies username and re-encrypts the new password using `BCryptPasswordEncoder`.
+    6.  **Repository**: Calls `UserService.saveNewUser(userInDb)` to persist changes in MongoDB.
+    7.  **Response**: Returns HTTP 204 No Content.
+
+#### 5. Delete User Profile
+*   **Endpoint**: `DELETE /user`
+*   **Flow**:
+    1.  **Request Input**: Auth Header with JWT token.
+    2.  **Filter/Security**: Validates identity from JWT token.
+    3.  **Controller**: `UserController.deleteUserById()`. Reads username from security context.
+    4.  **Repository**: Directly calls `UserRepository.deleteByUserName(userName)` to delete the User document.
+    5.  **Response**: Returns HTTP 204 No Content.
+
+#### 6. User Greeting with Weather
+*   **Endpoint**: `GET /user`
+*   **Flow**:
+    1.  **Request Input**: Auth Header with JWT token.
+    2.  **Filter/Security**: Extracts authenticated username from context.
+    3.  **Controller**: `UserController.greeting()`. Calls `WeatherService.getWeather("Mumbai")`.
+    4.  **Service / Cache Flow**:
+        *   `WeatherService` checks **Redis Cache** for key `"weather_of_Mumbai"`.
+        *   **Cache Hit**: Returns cached `WeatherResponse`.
+        *   **Cache Miss**: Fetches weather URL from `AppCache`. Replaces placeholder tokens with target city and private API Key. Executes REST POST request to external weather provider API.
+        *   Stores response payload back in Redis for 300 seconds (TTL) using `RedisService.set(...)`.
+    5.  **Formatting**: Builds greeting string `"Hi <username>, Weather feels like <feels_like_temp>"`.
+    6.  **Response**: Returns greeting string with HTTP 200 OK.
+
+---
+
+### C. Journal Entry APIs (`JournalEntryController`)
+Manages CRUD operations on journal documents linked to individual users.
+
+#### 7. Get All Journal Entries of User
+*   **Endpoint**: `GET /journal`
+*   **Flow**:
+    1.  **Request Input**: JWT Auth Header.
+    2.  **Filter/Security**: Extracts username from token.
+    3.  **Controller**: `JournalEntryController.getAllJournalEntriesOfUser()`.
+    4.  **Service**: Fetches the authenticated user profile using `UserService.findByUserName(userName)`.
+    5.  **Database**: Resolves user's DBRef relationship (`List<JournalEntry> journalEntries`).
+    6.  **Response**: Returns array of `JournalEntry` objects with HTTP 200 OK.
+
+#### 8. Create Journal Entry
+*   **Endpoint**: `POST /journal`
+*   **Flow**:
+    1.  **Request Input**: JSON payload with `title` and `content`. JWT Auth Header.
+    2.  **Filter/Security**: Extracts authenticated username.
+    3.  **Controller**: `JournalEntryController.createEntry(JournalEntry)`.
+    4.  **Service**: Invokes `JournalEntryService.saveEntry(myEntry, userName)`.
+    5.  **Logic**:
+        *   Sets entry date to `LocalDateTime.now()`.
+        *   Saves entry document via `JournalEntryRepository.save(journalEntry)`.
+        *   Fetches the user document, appends the newly saved journal entry's ID reference (`DBRef`), and updates the user record (`userService.saveUser(user)`).
+    6.  **Response**: Returns the saved `JournalEntry` with HTTP 201 Created.
+
+#### 9. Get Journal Entry By ID
+*   **Endpoint**: `GET /journal/id/{myId}`
+*   **Flow**:
+    1.  **Request Input**: Journal ID path variable, JWT Auth Header.
+    2.  **Controller**: `JournalEntryController.getJournalEntryById(myId)`.
+    3.  **Security & Verification**: Retrieves user document and filters `journalEntries` list to verify ownership of the target journal ID.
+    4.  **Database**: If owned, calls `JournalEntryService.findById(objectId)`.
+    5.  **Response**: Returns the matching `JournalEntry` with HTTP 200 OK (or HTTP 404 Not Found if entry doesn't exist or is not owned by the user).
+
+#### 10. Delete Journal Entry
+*   **Endpoint**: `DELETE /journal/id/{myId}`
+*   **Flow**:
+    1.  **Request Input**: Journal ID path variable, JWT Auth Header.
+    2.  **Controller**: `JournalEntryController.deleteJournalEntryById(myId)`.
+    3.  **Service**: Invokes `JournalEntryService.deleteById(myId, username)`.
+    4.  **Logic**:
+        *   Fetches user document and removes target entry ID from user's `journalEntries` list.
+        *   Saves updated user document back to DB.
+        *   Deletes journal entry document from `journal_entries` collection via `JournalEntryRepository.deleteById(myId)`.
+    5.  **Response**: Returns HTTP 204 No Content on success, or HTTP 404 Not Found if mismatch.
+
+#### 11. Update Journal Entry
+*   **Endpoint**: `PUT /journal/id/{myId}`
+*   **Flow**:
+    1.  **Request Input**: Journal ID path variable, JSON with updated `title`/`content`, JWT Auth Header.
+    2.  **Controller**: `JournalEntryController.updateJournalById(myId, newEntry)`.
+    3.  **Verification**: Verifies that user owns this journal ID.
+    4.  **Logic**: Fetches existing entry document, updates title/content attributes if provided, and saves it via `journalEntryService.saveEntry(old)`.
+    5.  **Response**: Returns updated `JournalEntry` object with HTTP 200 OK.
+
+---
+
+### D. Admin APIs (`AdminController`)
+Endpoints restricted to users with `"ADMIN"` role (as checked by Spring Security).
+
+#### 12. List All Users
+*   **Endpoint**: `GET /admin/all-users`
+*   **Flow**:
+    1.  **Request Input**: Admin role credentials/JWT.
+    2.  **Service**: Calls `UserService.getAll()`.
+    3.  **Repository**: Performs `UserRepository.findAll()`.
+    4.  **Response**: Returns array of all user profiles with HTTP 200 OK.
+
+#### 13. Create Admin User
+*   **Endpoint**: `POST /admin/create-admin-user`
+*   **Flow**:
+    1.  **Request Input**: User details JSON.
+    2.  **Service**: Calls `UserService.saveAdmin(user)`.
+    3.  **Logic**: Encrypts password and registers roles `["USER", "ADMIN"]`.
+    4.  **Repository**: Saves user to DB.
+    5.  **Response**: Returns void with HTTP 200 OK.
+
+#### 14. Clear App Cache
+*   **Endpoint**: `GET /admin/clear-app-cache`
+*   **Flow**:
+    1.  **Request Input**: HTTP GET.
+    2.  **Controller**: Invokes `AppCache.init()`.
+    3.  **Logic**: Queries internal config values from MongoDB config collections and updates memory mappings.
+    4.  **Response**: Returns void with HTTP 200 OK.
+
+---
+
+### E. Google OAuth APIs (`GoogleAuthController`)
+
+#### 15. Google Callback Endpoint
+*   **Endpoint**: `GET /auth/google/callback?code=<authorization_code>`
+*   **Flow**:
+    1.  **Request Input**: Code returned by Google auth servers.
+    2.  **Controller**: Calls standard token endpoint `https://oauth2.googleapis.com/token` with the authorization code, client ID, and secret.
+    3.  **Verification**: Google returns `id_token`. Controller executes a GET to Google tokeninfo endpoint `https://oauth2.googleapis.com/tokeninfo?id_token=<token>` to decrypt profile data.
+    4.  **Registration**:
+        *   Retrieves user's email address.
+        *   Queries if user email exists in DB. If not, auto-registers a new account using random password hash.
+    5.  **Token Generation**: Generates JWT token for the email/username.
+    6.  **Response**: Returns JSON containing `{ "token": "<JWT_TOKEN>" }` with HTTP 200 OK.
+
+---
+
+### F. Simple and Working Journal Test APIs
+
+#### 16. Simple Journal Create (Form Param/Get)
+*   **Endpoints**:
+    *   `POST /api/journal/create?title=<title>&content=<content>`
+    *   `GET /api/journal/create?title=<title>&content=<content>`
+*   **Flow**:
+    1.  **Request Input**: Path/form params.
+    2.  **Filter/Security**: Bypasses authentication check.
+    3.  **Controller**: Creates a transient `JournalEntry` and assigns it to a hardcoded test user `"testuser"`.
+    4.  **Service**: Saves entry and updates `testuser` references in DB.
+    5.  **Response**: Returns success message string.
+
+#### 17. Working Journal Create (Test Stub)
+*   **Endpoint**: `GET /working/create?title=<title>`
+*   **Flow**:
+    1.  **Controller**: Simulates entry creation.
+    2.  **Response**: Returns mock response details without hitting MongoDB.
+
+---
+
+## 3. MCP (Model Context Protocol) Tool Operations & Flows
+All MCP tools follow a JSON-RPC interaction model running over STDIO (system input/output).
+
+### Flow Diagram for all Tool Operations:
+`System.in` JSON-RPC String -> `McpSyncServer` parsing -> Check `McpSecurityContext` for active username -> Invoke tool handler -> Return results as JSON-RPC String via `System.out`.
+
+Below are details of the target tool execution mapping to code:
+
+| Tool Name | Action & Flow Description | Underlying Class & Method Call |
+| :--- | :--- | :--- |
+| **`create_journal_entry`** | Extracts `title` and `content`. Resolves username. Saves new journal document. Returns saved entry. | [JournalEntryTools.createJournalEntry()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/JournalEntryTools.java) |
+| **`get_my_journal_entries`**| Resolves user. Queries DBRef entries for target user. Returns array of journals. | [JournalEntryTools.getMyJournalEntries()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/JournalEntryTools.java) |
+| **`get_journal_by_id`** | Resolves user. Looks up journal entry by hex ObjectId. Verifies owner before output. | [JournalEntryTools.getJournalById()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/JournalEntryTools.java) |
+| **`update_journal`** | Resolves user. Updates `title` and/or `content` fields. Saves to MongoDB. | [JournalEntryTools.updateJournal()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/JournalEntryTools.java) |
+| **`delete_journal`** | Resolves user. Deletes reference from user document and removes journal record. | [JournalEntryTools.deleteJournal()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/JournalEntryTools.java) |
+| **`search_journal`** | Queries user's entries matching query arguments (`title`, `tag` content keywords, or `sentiment`). | [JournalEntryTools.searchJournal()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/JournalEntryTools.java) |
+| **`analyze_sentiment`** | Passes input text to sentiment analyser, returns analyzed emotion. | [SentimentTools.analyzeSentiment()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/SentimentTools.java) |
+| **`todays_weather`** | Calls the application's core `WeatherService.getWeather(city)` cache/external API flow. | [WeatherTools.todaysWeather()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/WeatherTools.java) |
+| **`send_email`** | Calls `EmailService.sendEmail` to mail out messages. | [EmailTools.sendEmail()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/EmailTools.java) |
+| **`get_user_profile`** | Resolves user, returns profile properties (email, sentimentAnalysis flag). | [UserProfileTools.getUserProfile()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/UserProfileTools.java) |
+| **`update_user_profile`** | Resolves user. Modifies password, email, or sentiment preferences. | [UserProfileTools.updateUserProfile()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/UserProfileTools.java) |
+| **`admin_get_all_users`**| Resolves user. Checks ADMIN credentials, then dumps user list. | [AdminTools.getAllUsers()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/AdminTools.java) |
+| **`admin_delete_user`** | Deletes any selected user by username (ADMIN only). | [AdminTools.deleteUser()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/AdminTools.java) |
+| **`admin_get_statistics`**| Queries totals for users and journals to report system stats. | [AdminTools.getStatistics()](file:///c:/Users/phapa/OneDrive/Desktop/journalApplication/src/main/java/net/engineeringdigest/journalApp/mcp/tools/AdminTools.java) |
+
+---
+
+## 4. Background Schedulers & Kafka Integration
+
+### Weekly Sentiment Analysis Scheduler
+Runs automatically every Sunday at 9:00 AM (`0 0 9 * * SUN`):
+
+```
+[ Scheduled Trigger ]
+         │
+         ▼
+  [ UserScheduler ] ─────────► Queries users registered for sentiment analysis.
+         │
+         ▼
+  [ Sentiment Filtering ] ───► Filters user's journals from the last 7 days.
+         │                     Calculates the most frequent sentiment.
+         ▼
+  [ Message Dispatch ] ──────► Attempts to send a SentimentData message to Kafka topic 
+         │                     "weekly-sentiments" using KafkaTemplate.
+         │
+         ├───► [ Kafka Broker Topic: weekly-sentiments ]
+         │                   │
+         │                   ▼
+         │             [ SentimentConsumerService ] ──► Consumes message, invokes email.
+         │
+         └───► (Fallback: If Kafka broker fails)
+                             │
+                             ▼
+                       [ EmailService ] ──────────────► Directly sends email notification.
+```
